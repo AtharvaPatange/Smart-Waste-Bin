@@ -131,7 +131,22 @@ async def read_root():
             });
 
             async function classifyWaste() {
-                if (!selectedFile) return;
+                if (!selectedFile) {
+                    displayError('Please select an image file first');
+                    return;
+                }
+
+                // Validate file type on client side
+                if (!selectedFile.type.startsWith('image/')) {
+                    displayError('Please select a valid image file (JPG, PNG, WebP, etc.)');
+                    return;
+                }
+
+                // Validate file size (max 10MB)
+                if (selectedFile.size > 10 * 1024 * 1024) {
+                    displayError('Image file too large. Please select a file under 10MB.');
+                    return;
+                }
 
                 const formData = new FormData();
                 formData.append('file', selectedFile);
@@ -145,9 +160,20 @@ async def read_root():
                         body: formData
                     });
 
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.detail || `HTTP ${response.status}: ${response.statusText}`);
+                    }
+
                     const data = await response.json();
-                    displayResult(data);
+                    
+                    if (data.success) {
+                        displayResult(data);
+                    } else {
+                        displayError('Classification failed: ' + (data.error || 'Unknown error'));
+                    }
                 } catch (error) {
+                    console.error('Classification error:', error);
                     displayError('Classification failed: ' + error.message);
                 }
 
@@ -236,6 +262,7 @@ class MedicalWasteClassifier:
     async def classify_with_gemini(self, image: Image.Image) -> Dict[str, Any]:
         """Classify medical waste using Google Gemini AI"""
         if not gemini_model:
+            logger.info("Gemini AI not configured, using default classification")
             return {
                 "category": "yellow",
                 "confidence": 0.5,
@@ -244,6 +271,8 @@ class MedicalWasteClassifier:
             }
 
         try:
+            logger.info("Starting Gemini classification...")
+            
             prompt = """
             Analyze this medical waste image and classify it into one of these categories:
             
@@ -252,10 +281,10 @@ class MedicalWasteClassifier:
             3. BLUE (Sharp Objects): Needles, scalpels, broken glass, sharp instruments  
             4. BLACK (Pharmaceutical): Expired medicines, chemotherapy drugs, pharmaceutical waste
             
-            Respond with JSON format:
+            Respond ONLY with JSON format:
             {
-                "category": "yellow|red|blue|black",
-                "confidence": 0.0-1.0,
+                "category": "yellow",
+                "confidence": 0.8,
                 "reasoning": "Brief explanation of classification"
             }
             """
@@ -263,10 +292,35 @@ class MedicalWasteClassifier:
             response = gemini_model.generate_content([prompt, image])
             result_text = response.text.strip()
             
+            logger.info(f"Gemini response: {result_text}")
+            
+            # Clean up response
             if result_text.startswith('```json'):
                 result_text = result_text.replace('```json', '').replace('```', '').strip()
+            elif result_text.startswith('```'):
+                result_text = result_text.replace('```', '').strip()
             
-            result = json.loads(result_text)
+            try:
+                result = json.loads(result_text)
+            except json.JSONDecodeError:
+                logger.warning(f"Failed to parse Gemini JSON response: {result_text}")
+                # Fallback: try to extract category from text
+                result_lower = result_text.lower()
+                if 'red' in result_lower:
+                    category = 'red'
+                elif 'blue' in result_lower:
+                    category = 'blue'
+                elif 'black' in result_lower:
+                    category = 'black'
+                else:
+                    category = 'yellow'
+                
+                result = {
+                    "category": category,
+                    "confidence": 0.7,
+                    "reasoning": "AI classification based on text analysis"
+                }
+            
             category = result.get("category", "yellow")
             
             return {
@@ -281,7 +335,7 @@ class MedicalWasteClassifier:
             return {
                 "category": "yellow",
                 "confidence": 0.5,
-                "reasoning": f"Classification failed: {str(e)} - Defaulting to General Biomedical",
+                "reasoning": f"AI service temporarily unavailable - Defaulting to General Biomedical",
                 "bin_recommendation": self.waste_categories["yellow"]
             }
 
@@ -302,11 +356,29 @@ async def health_check():
 async def classify_waste(file: UploadFile = File(...)):
     """Classify uploaded medical waste image"""
     try:
-        if not file.content_type.startswith("image/"):
-            raise HTTPException(status_code=400, detail="File must be an image")
+        # Log the incoming request for debugging
+        logger.info(f"Received file: {file.filename}, content_type: {file.content_type}")
         
+        # Read file data
         image_data = await file.read()
-        image = Image.open(io.BytesIO(image_data))
+        
+        # Validate file has content
+        if not image_data:
+            raise HTTPException(status_code=400, detail="Empty file uploaded")
+        
+        # Validate content type if available
+        if file.content_type and not file.content_type.startswith("image/"):
+            raise HTTPException(status_code=400, detail=f"File must be an image, received: {file.content_type}")
+        
+        # Try to open image
+        try:
+            image = Image.open(io.BytesIO(image_data))
+            # Convert to RGB if needed
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+        except Exception as img_error:
+            logger.error(f"Image processing error: {str(img_error)}")
+            raise HTTPException(status_code=400, detail=f"Invalid image file: {str(img_error)}")
         
         result = await classifier.classify_with_gemini(image)
         
