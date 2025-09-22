@@ -36,8 +36,8 @@ logger = logging.getLogger(__name__)
 # Initialize FastAPI app
 app = FastAPI(
     title="Sortyx Medical Waste Classification API",
-    description="Cloud-based medical waste classification system",
-    version="2.0.0"
+    description="Cloud-based medical waste classification system - WebSocket Free",
+    version="2.1.0"
 )
 
 # CORS configuration
@@ -169,14 +169,17 @@ classifier = MedicalWasteClassifier()
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root():
-    """Serve the main web interface"""
+    """Serve the main web interface - WebSocket Free Version"""
     html_content = """
     <!DOCTYPE html>
     <html lang="en">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Sortyx Medical Waste Classification</title>
+        <title>Sortyx Medical Waste Classification v2.1</title>
+        <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+        <meta http-equiv="Pragma" content="no-cache">
+        <meta http-equiv="Expires" content="0">
         <style>
             * { margin: 0; padding: 0; box-sizing: border-box; }
             body { font-family: 'Arial', sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; display: flex; align-items: center; justify-content: center; }
@@ -209,10 +212,11 @@ async def read_root():
         </style>
     </head>
     <body>
+        <!-- Sortyx v2.1 - WebSocket Free Version - Sep 22, 2025 -->
         <div class="container">
             <div class="logo">
                 <h1>🗂️ Sortyx</h1>
-                <p>Medical Waste Classification System</p>
+                <p>Medical Waste Classification System v2.1</p>
             </div>
 
             <div class="status-indicator status-connected" id="systemStatus">
@@ -459,6 +463,11 @@ async def classify_waste(file: UploadFile = File(...)):
 async def get_waste_categories():
     """Get all waste categories and their information"""
     return {"categories": classifier.waste_categories}
+
+@app.get("/fresh", response_class=HTMLResponse)
+async def fresh_interface():
+    """Force fresh interface - bypass cache"""
+    return await read_root()
 
 if __name__ == "__main__":
     import uvicorn
