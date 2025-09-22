@@ -203,6 +203,9 @@ async def read_root():
             .loading { display: none; text-align: center; margin: 20px 0; }
             .loading-spinner { border: 4px solid #f3f3f3; border-top: 4px solid #667eea; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto 15px; }
             @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+            .status-indicator { text-align: center; margin: 15px 0; padding: 10px; border-radius: 8px; font-size: 0.9rem; }
+            .status-connected { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+            .status-disconnected { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
         </style>
     </head>
     <body>
@@ -210,6 +213,10 @@ async def read_root():
             <div class="logo">
                 <h1>🗂️ Sortyx</h1>
                 <p>Medical Waste Classification System</p>
+            </div>
+
+            <div class="status-indicator status-connected" id="systemStatus">
+                ✅ System Status: Connected & Ready
             </div>
 
             <div class="upload-area" onclick="document.getElementById('fileInput').click()">
@@ -235,6 +242,39 @@ async def read_root():
 
         <script>
             let selectedFile = null;
+
+            // Check system status on load
+            document.addEventListener('DOMContentLoaded', async function() {
+                await checkSystemStatus();
+                // Check status every 30 seconds
+                setInterval(checkSystemStatus, 30000);
+            });
+
+            async function checkSystemStatus() {
+                try {
+                    const response = await fetch('/health');
+                    if (response.ok) {
+                        const data = await response.json();
+                        updateSystemStatus(true, data);
+                    } else {
+                        updateSystemStatus(false);
+                    }
+                } catch (error) {
+                    console.error('Health check failed:', error);
+                    updateSystemStatus(false);
+                }
+            }
+
+            function updateSystemStatus(isConnected, healthData = null) {
+                const statusElement = document.getElementById('systemStatus');
+                if (isConnected && healthData) {
+                    statusElement.className = 'status-indicator status-connected';
+                    statusElement.innerHTML = `✅ System Status: Online${healthData.gemini_configured ? ' | AI Ready' : ' | AI Offline'}`;
+                } else {
+                    statusElement.className = 'status-indicator status-disconnected';
+                    statusElement.innerHTML = '❌ System Status: Disconnected';
+                }
+            }
 
             document.getElementById('fileInput').addEventListener('change', function(e) {
                 selectedFile = e.target.files[0];
