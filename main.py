@@ -1,27 +1,24 @@
 #!/usr/bin/env python3
 """
 Railway-Optimized Medical Waste Classification Backend
-Root level deployment for Railway
+Minimal working version for Railway deployment
 """
 
 import os
 import io
 import base64
 import json
-import time
 import uuid
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Dict, Any
 import logging
 
 # Web Framework
-from fastapi import FastAPI, HTTPException, UploadFile, File, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.templating import Jinja2Templates
 
 # AI/ML Libraries
-import numpy as np
 from PIL import Image
 import google.generativeai as genai
 
@@ -52,7 +49,124 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Templates (create inline since Railway has directory issues)
+# Configure Gemini AI
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+    gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+    logger.info("✅ Gemini AI configured successfully")
+else:
+    logger.warning("⚠️ GEMINI_API_KEY not found in environment variables")
+    gemini_model = None
+
+class MedicalWasteClassifier:
+    def __init__(self):
+        self.waste_categories = {
+            "yellow": {
+                "name": "General Biomedical Waste",
+                "description": "Pathological waste, body parts, tissues",
+                "color": "#FFD700"
+            },
+            "red": {
+                "name": "Infectious/Pathological Waste", 
+                "description": "Highly infectious materials, cultures",
+                "color": "#DC143C"
+            },
+            "blue": {
+                "name": "Sharp Objects",
+                "description": "Needles, scalpels, broken glass",
+                "color": "#1E90FF"
+            },
+            "black": {
+                "name": "Pharmaceutical Waste",
+                "description": "Expired medicines, chemotherapy drugs",
+                "color": "#2F4F4F"
+            }
+        }
+
+    def classify_with_gemini(self, image: Image.Image) -> Dict[str, Any]:
+        """Classify medical waste using Google Gemini AI"""
+        if not gemini_model:
+            logger.info("Gemini AI not configured, using default classification")
+            return {
+                "category": "yellow",
+                "confidence": 0.5,
+                "reasoning": "Gemini AI not configured - defaulting to General Biomedical Waste",
+                "bin_recommendation": self.waste_categories["yellow"]
+            }
+
+        try:
+            logger.info("Starting Gemini classification...")
+            
+            prompt = """
+            Analyze this medical waste image and classify it into one of these categories:
+            
+            1. YELLOW (General Biomedical): Pathological waste, body parts, tissues, blood-soaked materials
+            2. RED (Infectious): Highly infectious materials, microbiological cultures, lab waste
+            3. BLUE (Sharp Objects): Needles, scalpels, broken glass, sharp instruments  
+            4. BLACK (Pharmaceutical): Expired medicines, chemotherapy drugs, pharmaceutical waste
+            
+            Respond ONLY with JSON format:
+            {
+                "category": "yellow",
+                "confidence": 0.8,
+                "reasoning": "Brief explanation of classification"
+            }
+            """
+
+            response = gemini_model.generate_content([prompt, image])
+            result_text = response.text.strip()
+            
+            logger.info(f"Gemini response: {result_text}")
+            
+            # Clean up response
+            if '```json' in result_text:
+                result_text = result_text.split('```json')[1].split('```')[0].strip()
+            elif '```' in result_text:
+                result_text = result_text.replace('```', '').strip()
+            
+            try:
+                result = json.loads(result_text)
+            except json.JSONDecodeError:
+                logger.warning(f"Failed to parse JSON: {result_text}")
+                # Fallback classification
+                result_lower = result_text.lower()
+                if 'red' in result_lower or 'infectious' in result_lower:
+                    category = 'red'
+                elif 'blue' in result_lower or 'sharp' in result_lower:
+                    category = 'blue'
+                elif 'black' in result_lower or 'pharmaceutical' in result_lower:
+                    category = 'black'
+                else:
+                    category = 'yellow'
+                
+                result = {
+                    "category": category,
+                    "confidence": 0.7,
+                    "reasoning": "AI classification based on text analysis"
+                }
+            
+            category = result.get("category", "yellow")
+            
+            return {
+                "category": category,
+                "confidence": result.get("confidence", 0.8),
+                "reasoning": result.get("reasoning", "AI classification"),
+                "bin_recommendation": self.waste_categories.get(category, self.waste_categories["yellow"])
+            }
+            
+        except Exception as e:
+            logger.error(f"Gemini classification error: {str(e)}")
+            return {
+                "category": "yellow",
+                "confidence": 0.5,
+                "reasoning": f"AI service temporarily unavailable - Defaulting to General Biomedical",
+                "bin_recommendation": self.waste_categories["yellow"]
+            }
+
+# Initialize classifier
+classifier = MedicalWasteClassifier()
+
 @app.get("/", response_class=HTMLResponse)
 async def read_root():
     """Serve the main web interface"""
@@ -136,7 +250,7 @@ async def read_root():
                     return;
                 }
 
-                // Validate file type on client side
+                // Validate file type
                 if (!selectedFile.type.startsWith('image/')) {
                     displayError('Please select a valid image file (JPG, PNG, WebP, etc.)');
                     return;
@@ -161,8 +275,18 @@ async def read_root():
                     });
 
                     if (!response.ok) {
-                        const errorData = await response.json();
-                        throw new Error(errorData.detail || `HTTP ${response.status}: ${response.statusText}`);
+                        const errorText = await response.text();
+                        let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+                        
+                        try {
+                            const errorData = JSON.parse(errorText);
+                            errorMessage = errorData.detail || errorMessage;
+                        } catch (e) {
+                            // If response is not JSON, use the text
+                            errorMessage = errorText || errorMessage;
+                        }
+                        
+                        throw new Error(errorMessage);
                     }
 
                     const data = await response.json();
@@ -217,131 +341,6 @@ async def read_root():
     """
     return HTMLResponse(content=html_content)
 
-# Create necessary directories
-os.makedirs("static", exist_ok=True)
-
-# Configure Gemini AI
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-    gemini_model = genai.GenerativeModel('gemini-1.5-flash')
-    logger.info("✅ Gemini AI configured successfully")
-else:
-    logger.warning("⚠️ GEMINI_API_KEY not found in environment variables")
-    gemini_model = None
-
-class MedicalWasteClassifier:
-    def __init__(self):
-        self.waste_categories = {
-            "yellow": {
-                "name": "General Biomedical Waste",
-                "description": "Pathological waste, body parts, tissues",
-                "color": "#FFD700",
-                "bin_id": 1
-            },
-            "red": {
-                "name": "Infectious/Pathological Waste", 
-                "description": "Highly infectious materials, cultures",
-                "color": "#DC143C",
-                "bin_id": 2
-            },
-            "blue": {
-                "name": "Sharp Objects",
-                "description": "Needles, scalpels, broken glass",
-                "color": "#1E90FF", 
-                "bin_id": 3
-            },
-            "black": {
-                "name": "Pharmaceutical Waste",
-                "description": "Expired medicines, chemotherapy drugs",
-                "color": "#2F4F4F",
-                "bin_id": 4
-            }
-        }
-
-    async def classify_with_gemini(self, image: Image.Image) -> Dict[str, Any]:
-        """Classify medical waste using Google Gemini AI"""
-        if not gemini_model:
-            logger.info("Gemini AI not configured, using default classification")
-            return {
-                "category": "yellow",
-                "confidence": 0.5,
-                "reasoning": "Gemini AI not configured - defaulting to General Biomedical Waste",
-                "bin_recommendation": self.waste_categories["yellow"]
-            }
-
-        try:
-            logger.info("Starting Gemini classification...")
-            
-            prompt = """
-            Analyze this medical waste image and classify it into one of these categories:
-            
-            1. YELLOW (General Biomedical): Pathological waste, body parts, tissues, blood-soaked materials
-            2. RED (Infectious): Highly infectious materials, microbiological cultures, lab waste
-            3. BLUE (Sharp Objects): Needles, scalpels, broken glass, sharp instruments  
-            4. BLACK (Pharmaceutical): Expired medicines, chemotherapy drugs, pharmaceutical waste
-            
-            Respond ONLY with JSON format:
-            {
-                "category": "yellow",
-                "confidence": 0.8,
-                "reasoning": "Brief explanation of classification"
-            }
-            """
-
-            response = gemini_model.generate_content([prompt, image])
-            result_text = response.text.strip()
-            
-            logger.info(f"Gemini response: {result_text}")
-            
-            # Clean up response
-            if result_text.startswith('```json'):
-                result_text = result_text.replace('```json', '').replace('```', '').strip()
-            elif result_text.startswith('```'):
-                result_text = result_text.replace('```', '').strip()
-            
-            try:
-                result = json.loads(result_text)
-            except json.JSONDecodeError:
-                logger.warning(f"Failed to parse Gemini JSON response: {result_text}")
-                # Fallback: try to extract category from text
-                result_lower = result_text.lower()
-                if 'red' in result_lower:
-                    category = 'red'
-                elif 'blue' in result_lower:
-                    category = 'blue'
-                elif 'black' in result_lower:
-                    category = 'black'
-                else:
-                    category = 'yellow'
-                
-                result = {
-                    "category": category,
-                    "confidence": 0.7,
-                    "reasoning": "AI classification based on text analysis"
-                }
-            
-            category = result.get("category", "yellow")
-            
-            return {
-                "category": category,
-                "confidence": result.get("confidence", 0.8),
-                "reasoning": result.get("reasoning", "AI classification"),
-                "bin_recommendation": self.waste_categories.get(category, self.waste_categories["yellow"])
-            }
-            
-        except Exception as e:
-            logger.error(f"Gemini classification error: {str(e)}")
-            return {
-                "category": "yellow",
-                "confidence": 0.5,
-                "reasoning": f"AI service temporarily unavailable - Defaulting to General Biomedical",
-                "bin_recommendation": self.waste_categories["yellow"]
-            }
-
-# Initialize classifier
-classifier = MedicalWasteClassifier()
-
 @app.get("/health")
 async def health_check():
     """Health check endpoint for Railway"""
@@ -356,8 +355,8 @@ async def health_check():
 async def classify_waste(file: UploadFile = File(...)):
     """Classify uploaded medical waste image"""
     try:
-        # Log the incoming request for debugging
-        logger.info(f"Received file: {file.filename}, content_type: {file.content_type}")
+        # Log the incoming request
+        logger.info(f"Received file: {file.filename}, content_type: {file.content_type}, size: {file.size}")
         
         # Read file data
         image_data = await file.read()
@@ -376,12 +375,16 @@ async def classify_waste(file: UploadFile = File(...)):
             # Convert to RGB if needed
             if image.mode != 'RGB':
                 image = image.convert('RGB')
+            logger.info(f"Image processed successfully: {image.size}, mode: {image.mode}")
         except Exception as img_error:
             logger.error(f"Image processing error: {str(img_error)}")
             raise HTTPException(status_code=400, detail=f"Invalid image file: {str(img_error)}")
         
-        result = await classifier.classify_with_gemini(image)
+        # Classify with Gemini AI
+        result = classifier.classify_with_gemini(image)
+        logger.info(f"Classification result: {result}")
         
+        # Generate QR code
         qr_data = {
             "waste_id": str(uuid.uuid4()),
             "category": result["category"],
@@ -406,6 +409,8 @@ async def classify_waste(file: UploadFile = File(...)):
             "timestamp": datetime.now().isoformat()
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Classification error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Classification failed: {str(e)}")
