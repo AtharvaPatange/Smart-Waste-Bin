@@ -1,0 +1,32 @@
+# AWS Elastic Container Service deployment
+version: 3
+
+services:
+  sortyx-backend:
+    build: 
+      context: .
+      dockerfile: Dockerfile.production
+    cpu: 512
+    memory: 1024
+    port_mappings:
+      - 80:8000
+    environment:
+      - ENVIRONMENT=production
+      - AWS_REGION=us-east-1
+    secrets:
+      - GEMINI_API_KEY
+      - DB_PASSWORD
+    
+  postgres:
+    image: postgres:15-alpine
+    cpu: 256
+    memory: 512
+    environment:
+      - POSTGRES_DB=sortyx_db
+    secrets:
+      - POSTGRES_PASSWORD
+
+  redis:
+    image: redis:7-alpine
+    cpu: 128
+    memory: 256
