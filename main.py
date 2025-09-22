@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="Sortyx Medical Waste Classification API",
     description="Cloud-based medical waste classification system - WebSocket Free",
-    version="2.1.0"
+    version="2.1.1"
 )
 
 # CORS configuration
@@ -176,7 +176,7 @@ async def read_root():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Sortyx Medical Waste Classification v2.1</title>
+        <title>Sortyx Medical Waste Classification v2.1.1</title>
         <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
         <meta http-equiv="Pragma" content="no-cache">
         <meta http-equiv="Expires" content="0">
@@ -216,7 +216,7 @@ async def read_root():
         <div class="container">
             <div class="logo">
                 <h1>🗂️ Sortyx</h1>
-                <p>Medical Waste Classification System v2.1</p>
+        		<p>Medical Waste Classification System v2.1.1 - Updated</p>
             </div>
 
             <div class="status-indicator status-connected" id="systemStatus">
