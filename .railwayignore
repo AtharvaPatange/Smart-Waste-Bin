@@ -1,0 +1,11 @@
+cloud_backend/
+*.zip
+*.pt
+images/
+classified_results/
+sxv*.py
+*.pdf
+create_bin_images.py
+pratik.jpg
+testqr.py
+temp_qr.png
